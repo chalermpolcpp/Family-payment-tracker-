@@ -1,0 +1,769 @@
+import { useState, useEffect, useCallback } from "react";
+
+// ===================== CONFIG =====================
+// กรอก Google Apps Script Web App URL ของคุณที่นี่
+const GAS_URL = "YOUR_GOOGLE_APPS_SCRIPT_URL";
+
+const MEMBERS = [
+  {
+    id: "fluke",
+    name: "ฟลุ๊ค",
+    role: "ตัวฉัน",
+    total: 100000,
+    monthly: 1000,
+    interest: 0,
+    months: 100,
+    color: "#6C9BCF",
+    emoji: "👨",
+  },
+  {
+    id: "fern",
+    name: "เฟิส",
+    role: "พี่สาว",
+    total: 100000,
+    monthly: 1000,
+    interest: 0,
+    months: 100,
+    color: "#C96A9A",
+    emoji: "👩",
+  },
+  {
+    id: "santi",
+    name: "สันติ",
+    role: "พ่อ",
+    total: 100000,
+    monthly: 1000,
+    interest: 500,
+    months: 100,
+    color: "#E8954A",
+    emoji: "👨‍💼",
+    note: "มีดอกเบี้ย 500 บาท/เดือน",
+  },
+  {
+    id: "grandma",
+    name: "ยาย",
+    role: "ส่งเงินรายเดือน",
+    total: null,
+    monthly: 5000,
+    interest: 0,
+    months: null,
+    color: "#5EAF88",
+    emoji: "👵",
+    note: "ส่งจนกว่ายายจะเสียชีวิต",
+    isOngoing: true,
+  },
+  {
+    id: "dad_repay",
+    name: "พ่อ → แม่",
+    role: "พ่อคืนเงินแม่",
+    total: 60000,
+    monthly: 5000,
+    interest: 0,
+    months: 12,
+    color: "#9B7EC8",
+    emoji: "💸",
+    note: "60,000 บาท ใน 12 เดือน",
+  },
+];
+
+const SHEET_TABS = {
+  fluke: "ฟลุ๊ค",
+  fern: "เฟิส",
+  santi: "สันติ",
+  grandma: "ยาย",
+  dad_repay: "พ่อ-แม่",
+};
+
+// ===================== UTIL =====================
+function formatBaht(n) {
+  return n?.toLocaleString("th-TH") + " ฿";
+}
+function formatDate(d) {
+  if (!d) return "-";
+  return new Date(d).toLocaleDateString("th-TH", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+}
+function thaiMonth(idx) {
+  const m = [
+    "ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.",
+    "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค.",
+  ];
+  return m[idx];
+}
+
+// ===================== GOOGLE APPS SCRIPT HELPER =====================
+async function callGAS(action, payload) {
+  try {
+    const res = await fetch(GAS_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, ...payload }),
+    });
+    return await res.json();
+  } catch (e) {
+    console.error("GAS Error:", e);
+    return { success: false, error: e.message };
+  }
+}
+
+// ===================== COMPONENTS =====================
+
+function ProgressBar({ paid, total, color }) {
+  const pct = total ? Math.min(100, (paid / total) * 100) : 0;
+  return (
+    <div style={{ background: "#1a1a2e", borderRadius: 999, height: 10, overflow: "hidden", margin: "8px 0" }}>
+      <div
+        style={{
+          width: `${pct}%`,
+          height: "100%",
+          background: color,
+          borderRadius: 999,
+          transition: "width 0.8s cubic-bezier(.4,2,.6,1)",
+          boxShadow: `0 0 8px ${color}88`,
+        }}
+      />
+    </div>
+  );
+}
+
+function StatusBadge({ status }) {
+  const map = {
+    paid: { label: "✓ จ่ายแล้ว", bg: "#1a3a2a", color: "#4ade80" },
+    pending: { label: "⏳ รอชำระ", bg: "#2a1a0a", color: "#fbbf24" },
+    overdue: { label: "⚠ เกินกำหนด", bg: "#3a0a0a", color: "#f87171" },
+  };
+  const s = map[status] || map.pending;
+  return (
+    <span
+      style={{
+        background: s.bg,
+        color: s.color,
+        padding: "2px 10px",
+        borderRadius: 999,
+        fontSize: 11,
+        fontWeight: 700,
+        border: `1px solid ${s.color}44`,
+        letterSpacing: 0.5,
+      }}
+    >
+      {s.label}
+    </span>
+  );
+}
+
+function UploadSlip({ memberId, monthKey, onUploaded, existingUrl }) {
+  const [uploading, setUploading] = useState(false);
+  const [preview, setPreview] = useState(existingUrl || null);
+
+  const handleFile = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setUploading(true);
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const base64 = reader.result.split(",")[1];
+      const res = await callGAS("uploadSlip", {
+        memberId,
+        monthKey,
+        fileName: file.name,
+        mimeType: file.type,
+        base64Data: base64,
+      });
+      if (res.success) {
+        setPreview(res.fileUrl);
+        onUploaded(res.fileUrl);
+      }
+      setUploading(false);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <label
+        style={{
+          cursor: "pointer",
+          background: preview ? "#1a3a2a" : "#1a1a3a",
+          border: `1px dashed ${preview ? "#4ade80" : "#6C9BCF"}`,
+          borderRadius: 8,
+          padding: "4px 12px",
+          fontSize: 12,
+          color: preview ? "#4ade80" : "#8ab4f8",
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          whiteSpace: "nowrap",
+        }}
+      >
+        {uploading ? "⏳ กำลังอัปโหลด..." : preview ? "✓ มีสลีปแล้ว" : "📎 แนบสลีป"}
+        <input type="file" accept="image/*" style={{ display: "none" }} onChange={handleFile} />
+      </label>
+      {preview && (
+        <a href={preview} target="_blank" rel="noopener noreferrer"
+          style={{ fontSize: 11, color: "#8ab4f8", textDecoration: "underline" }}>
+          ดู
+        </a>
+      )}
+    </div>
+  );
+}
+
+function PaymentRow({ row, memberId, onUpdate, color }) {
+  const [dateInput, setDateInput] = useState(row.paidDate || "");
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    setSaving(true);
+    const res = await callGAS("updatePayment", {
+      memberId,
+      monthKey: row.monthKey,
+      paidDate: dateInput,
+      status: "paid",
+    });
+    if (res.success) onUpdate({ ...row, paidDate: dateInput, status: "paid" });
+    setSaving(false);
+  };
+
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "2fr 1.5fr 1.5fr 1.5fr 1.2fr",
+        gap: 8,
+        alignItems: "center",
+        padding: "10px 16px",
+        borderBottom: "1px solid #ffffff0a",
+        fontSize: 13,
+      }}
+    >
+      <span style={{ color: "#e2e8f0", fontWeight: 600 }}>
+        เดือนที่ {row.month} — {row.label}
+      </span>
+      <span style={{ color: color, fontWeight: 700 }}>{formatBaht(row.amount)}</span>
+      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+        <input
+          type="date"
+          value={dateInput}
+          onChange={(e) => setDateInput(e.target.value)}
+          style={{
+            background: "#0d0d1a",
+            border: "1px solid #333",
+            borderRadius: 6,
+            color: "#e2e8f0",
+            padding: "3px 7px",
+            fontSize: 12,
+            width: "100%",
+          }}
+        />
+        <button
+          onClick={handleSave}
+          disabled={saving || !dateInput}
+          style={{
+            background: saving ? "#333" : color + "33",
+            border: `1px solid ${color}`,
+            color: color,
+            borderRadius: 6,
+            padding: "3px 10px",
+            fontSize: 11,
+            cursor: saving ? "not-allowed" : "pointer",
+            whiteSpace: "nowrap",
+            fontWeight: 700,
+          }}
+        >
+          {saving ? "..." : "บันทึก"}
+        </button>
+      </div>
+      <UploadSlip
+        memberId={memberId}
+        monthKey={row.monthKey}
+        existingUrl={row.slipUrl}
+        onUploaded={(url) => onUpdate({ ...row, slipUrl: url })}
+      />
+      <StatusBadge status={row.status} />
+    </div>
+  );
+}
+
+function MemberCard({ member, isActive, onClick }) {
+  const paidCount = 0;
+  const totalMonths = member.months || "∞";
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        background: isActive
+          ? `linear-gradient(135deg, ${member.color}22, ${member.color}11)`
+          : "#0d0d1a",
+        border: `2px solid ${isActive ? member.color : "#1a1a2e"}`,
+        borderRadius: 16,
+        padding: "18px 20px",
+        cursor: "pointer",
+        textAlign: "left",
+        transition: "all 0.2s",
+        boxShadow: isActive ? `0 0 20px ${member.color}33` : "none",
+      }}
+    >
+      <div style={{ fontSize: 28, marginBottom: 6 }}>{member.emoji}</div>
+      <div style={{ color: "#e2e8f0", fontWeight: 800, fontSize: 16 }}>{member.name}</div>
+      <div style={{ color: "#8896a5", fontSize: 12, marginBottom: 8 }}>{member.role}</div>
+      <div style={{ color: member.color, fontWeight: 700, fontSize: 14 }}>
+        {formatBaht(member.monthly)}/เดือน
+        {member.interest > 0 && <span style={{ color: "#fbbf24", marginLeft: 6, fontSize: 11 }}>+ดอก {formatBaht(member.interest)}</span>}
+      </div>
+      {member.total && (
+        <ProgressBar paid={paidCount * member.monthly} total={member.total} color={member.color} />
+      )}
+      <div style={{ color: "#8896a5", fontSize: 11, marginTop: 4 }}>
+        {member.isOngoing ? "ส่งต่อเนื่องไม่มีกำหนด" : `${paidCount}/${totalMonths} เดือน`}
+      </div>
+    </button>
+  );
+}
+
+function buildRows(member) {
+  const rows = [];
+  const now = new Date();
+
+  // กำหนดวันเริ่มแยกตามสมาชิก
+  const startDates = {
+    fluke:     { year: 2024, month: 0 },  // ม.ค. 67 (2024)
+    fern:      { year: 2024, month: 0 },  // ม.ค. 67
+    santi:     { year: 2024, month: 0 },  // ม.ค. 67
+    grandma:   { year: 2025, month: 9 },  // ต.ค. 68 (2025)
+    dad_repay: { year: 2026, month: 0 },  // ม.ค. 69 (2026)
+  };
+
+  const start = startDates[member.id] || { year: 2024, month: 0 };
+  const startYear = start.year;
+  const startMonth = start.month;
+
+  const totalMonths = member.months || 60;
+  for (let i = 0; i < totalMonths; i++) {
+    const d = new Date(startYear, startMonth + i, 1);
+    const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const label = `${thaiMonth(d.getMonth())} ${d.getFullYear()}`;
+    const isPast = d < now;
+    rows.push({
+      month: i + 1,
+      monthKey,
+      label,
+      amount: member.monthly + (member.interest || 0),
+      paidDate: null,
+      slipUrl: null,
+      status: isPast ? "overdue" : "pending",
+    });
+  }
+  return rows;
+}
+
+// ===================== MAIN APP =====================
+export default function App() {
+  const [activeMember, setActiveMember] = useState(MEMBERS[0]);
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [gasReady, setGasReady] = useState(GAS_URL !== "YOUR_GOOGLE_APPS_SCRIPT_URL");
+  const [showSetup, setShowSetup] = useState(false);
+  const [gasInput, setGasInput] = useState("");
+
+  useEffect(() => {
+    // Build local rows (in real app, fetch from GAS)
+    setRows(buildRows(activeMember));
+  }, [activeMember]);
+
+  const handleUpdate = (updated) => {
+    setRows((prev) => prev.map((r) => (r.monthKey === updated.monthKey ? updated : r)));
+  };
+
+  const paidRows = rows.filter((r) => r.status === "paid");
+  const totalPaid = paidRows.length * activeMember.monthly;
+  const remaining = activeMember.total ? activeMember.total - totalPaid : null;
+
+  return (
+    <div
+      style={{
+        minHeight: "100vh",
+        background: "#070711",
+        fontFamily: "'Sarabun', 'Noto Sans Thai', sans-serif",
+        color: "#e2e8f0",
+      }}
+    >
+      {/* Google Font */}
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;600;700;800&display=swap');
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        ::-webkit-scrollbar { width: 6px; background: #0d0d1a; }
+        ::-webkit-scrollbar-thumb { background: #1a1a3a; border-radius: 3px; }
+        input[type=date]::-webkit-calendar-picker-indicator { filter: invert(0.7); }
+      `}</style>
+
+      {/* Header */}
+      <div
+        style={{
+          background: "linear-gradient(90deg, #0d0d1a 0%, #0d1a2e 100%)",
+          borderBottom: "1px solid #1a1a3a",
+          padding: "20px 32px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+        }}
+      >
+        <div>
+          <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: -0.5 }}>
+            💰 ระบบบันทึกการชำระเงิน
+          </div>
+          <div style={{ color: "#8896a5", fontSize: 13, marginTop: 2 }}>
+            ติดตามการคืนเงินและโอนเงินครอบครัว
+          </div>
+        </div>
+        <button
+          onClick={() => setShowSetup(!showSetup)}
+          style={{
+            background: gasReady ? "#1a3a2a" : "#3a1a0a",
+            border: `1px solid ${gasReady ? "#4ade80" : "#fbbf24"}`,
+            color: gasReady ? "#4ade80" : "#fbbf24",
+            borderRadius: 10,
+            padding: "8px 16px",
+            cursor: "pointer",
+            fontSize: 13,
+            fontWeight: 700,
+          }}
+        >
+          {gasReady ? "✓ เชื่อมต่อ Google แล้ว" : "⚙️ ตั้งค่า Google"}
+        </button>
+      </div>
+
+      {/* Setup Panel */}
+      {showSetup && (
+        <div
+          style={{
+            background: "#0d1122",
+            border: "1px solid #1a2a4a",
+            margin: "0 32px",
+            borderRadius: 12,
+            padding: 20,
+            marginTop: 16,
+          }}
+        >
+          <div style={{ fontWeight: 700, marginBottom: 12, color: "#8ab4f8" }}>
+            🔧 ตั้งค่า Google Apps Script URL
+          </div>
+          <div style={{ fontSize: 13, color: "#8896a5", marginBottom: 12, lineHeight: 1.7 }}>
+            1. เปิด <strong style={{ color: "#e2e8f0" }}>script.google.com</strong> → สร้างโปรเจกต์ใหม่<br />
+            2. วางโค้ด Google Apps Script ที่ให้ไว้ด้านล่างนี้<br />
+            3. Deploy → New deployment → Web App → Execute as: Me, Access: Anyone<br />
+            4. คัดลอก URL แล้ววางด้านล่าง
+          </div>
+          <div style={{ display: "flex", gap: 10 }}>
+            <input
+              value={gasInput}
+              onChange={(e) => setGasInput(e.target.value)}
+              placeholder="https://script.google.com/macros/s/..."
+              style={{
+                flex: 1,
+                background: "#070711",
+                border: "1px solid #2a3a5a",
+                borderRadius: 8,
+                color: "#e2e8f0",
+                padding: "10px 14px",
+                fontSize: 13,
+              }}
+            />
+            <button
+              onClick={() => {
+                if (gasInput.includes("script.google.com")) {
+                  setGasReady(true);
+                  setShowSetup(false);
+                  alert("✅ บันทึก URL แล้ว! กรุณา reload หน้าและอัปเดต GAS_URL ในโค้ด");
+                }
+              }}
+              style={{
+                background: "#6C9BCF33",
+                border: "1px solid #6C9BCF",
+                color: "#6C9BCF",
+                borderRadius: 8,
+                padding: "10px 20px",
+                cursor: "pointer",
+                fontWeight: 700,
+              }}
+            >
+              บันทึก
+            </button>
+          </div>
+
+          {/* GAS Code */}
+          <div style={{ marginTop: 16 }}>
+            <div style={{ color: "#fbbf24", fontWeight: 700, marginBottom: 8, fontSize: 13 }}>
+              📋 โค้ด Google Apps Script (คัดลอกทั้งหมด):
+            </div>
+            <pre
+              style={{
+                background: "#050508",
+                border: "1px solid #1a1a3a",
+                borderRadius: 8,
+                padding: 14,
+                fontSize: 11,
+                color: "#a8b8d0",
+                overflow: "auto",
+                maxHeight: 300,
+                lineHeight: 1.6,
+              }}
+            >{GAS_CODE}</pre>
+          </div>
+        </div>
+      )}
+
+      <div style={{ padding: "24px 32px", display: "flex", gap: 24 }}>
+        {/* Left: Member List */}
+        <div style={{ width: 220, flexShrink: 0 }}>
+          <div style={{ color: "#8896a5", fontSize: 12, fontWeight: 700, letterSpacing: 1, marginBottom: 12 }}>
+            สมาชิก
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {MEMBERS.map((m) => (
+              <MemberCard
+                key={m.id}
+                member={m}
+                isActive={activeMember.id === m.id}
+                onClick={() => setActiveMember(m)}
+              />
+            ))}
+          </div>
+        </div>
+
+        {/* Right: Payment Table */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {/* Summary */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(4, 1fr)",
+              gap: 16,
+              marginBottom: 24,
+            }}
+          >
+            {[
+              {
+                label: "ยอดรวมทั้งหมด",
+                value: activeMember.total ? formatBaht(activeMember.total) : "ไม่จำกัด",
+                color: activeMember.color,
+              },
+              {
+                label: "จ่ายต่อเดือน",
+                value: formatBaht(activeMember.monthly + (activeMember.interest || 0)),
+                color: "#8ab4f8",
+              },
+              {
+                label: "จ่ายแล้ว",
+                value: formatBaht(totalPaid),
+                color: "#4ade80",
+              },
+              {
+                label: "คงเหลือ",
+                value: remaining !== null ? formatBaht(remaining) : "-",
+                color: "#fbbf24",
+              },
+            ].map((s) => (
+              <div
+                key={s.label}
+                style={{
+                  background: "#0d0d1a",
+                  border: "1px solid #1a1a2e",
+                  borderRadius: 12,
+                  padding: "16px 20px",
+                }}
+              >
+                <div style={{ color: "#8896a5", fontSize: 12, marginBottom: 6 }}>{s.label}</div>
+                <div style={{ color: s.color, fontWeight: 800, fontSize: 20 }}>{s.value}</div>
+              </div>
+            ))}
+          </div>
+
+          {activeMember.total && (
+            <div style={{ marginBottom: 20 }}>
+              <ProgressBar
+                paid={totalPaid}
+                total={activeMember.total}
+                color={activeMember.color}
+              />
+              <div style={{ color: "#8896a5", fontSize: 12, textAlign: "right" }}>
+                {activeMember.total
+                  ? `${((totalPaid / activeMember.total) * 100).toFixed(1)}% ชำระแล้ว`
+                  : ""}
+              </div>
+            </div>
+          )}
+
+          {/* Table Header */}
+          <div
+            style={{
+              background: "#0d0d1a",
+              border: "1px solid #1a1a2e",
+              borderRadius: 12,
+              overflow: "hidden",
+            }}
+          >
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "2fr 1.5fr 1.5fr 1.5fr 1.2fr",
+                gap: 8,
+                padding: "12px 16px",
+                background: "#070711",
+                borderBottom: "1px solid #1a1a2e",
+                fontSize: 12,
+                fontWeight: 700,
+                color: "#8896a5",
+                letterSpacing: 0.5,
+              }}
+            >
+              <span>เดือน</span>
+              <span>จำนวนเงิน</span>
+              <span>วันที่โอน</span>
+              <span>สลีปการโอน</span>
+              <span>สถานะ</span>
+            </div>
+            <div style={{ maxHeight: 500, overflowY: "auto" }}>
+              {rows.map((row) => (
+                <PaymentRow
+                  key={row.monthKey}
+                  row={row}
+                  memberId={activeMember.id}
+                  onUpdate={handleUpdate}
+                  color={activeMember.color}
+                />
+              ))}
+            </div>
+          </div>
+
+          {activeMember.note && (
+            <div
+              style={{
+                marginTop: 16,
+                padding: "10px 16px",
+                background: "#1a1a0a",
+                border: "1px solid #fbbf2444",
+                borderRadius: 8,
+                color: "#fbbf24",
+                fontSize: 13,
+              }}
+            >
+              📌 {activeMember.note}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ===================== GAS CODE STRING =====================
+const GAS_CODE = `
+// Google Apps Script - วางในไฟล์ Code.gs
+// ========================================
+// ตั้งค่า: แก้ SPREADSHEET_ID และ DRIVE_FOLDER_ID
+
+const SPREADSHEET_ID = "YOUR_SPREADSHEET_ID";
+const DRIVE_FOLDER_ID = "YOUR_DRIVE_FOLDER_ID";
+
+function doPost(e) {
+  const data = JSON.parse(e.postData.contents);
+  let result;
+  
+  if (data.action === "updatePayment") {
+    result = updatePayment(data);
+  } else if (data.action === "uploadSlip") {
+    result = uploadSlip(data);
+  } else if (data.action === "getData") {
+    result = getData(data);
+  }
+  
+  return ContentService
+    .createTextOutput(JSON.stringify(result))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function updatePayment(data) {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const tabName = {
+    fluke: "ฟลุ๊ค", fern: "เฟิส", santi: "สันติ",
+    grandma: "ยาย", dad_repay: "พ่อ-แม่"
+  }[data.memberId];
+  
+  let sheet = ss.getSheetByName(tabName);
+  if (!sheet) {
+    sheet = ss.insertSheet(tabName);
+    sheet.appendRow(["เดือน", "วันที่โอน", "สถานะ", "URL สลีป"]);
+  }
+  
+  const values = sheet.getDataRange().getValues();
+  let rowIdx = -1;
+  for (let i = 1; i < values.length; i++) {
+    if (values[i][0] === data.monthKey) { rowIdx = i + 1; break; }
+  }
+  
+  if (rowIdx === -1) {
+    sheet.appendRow([data.monthKey, data.paidDate, data.status, ""]);
+  } else {
+    sheet.getRange(rowIdx, 2).setValue(data.paidDate);
+    sheet.getRange(rowIdx, 3).setValue(data.status);
+  }
+  
+  return { success: true };
+}
+
+function uploadSlip(data) {
+  const folder = DriveApp.getFolderById(DRIVE_FOLDER_ID);
+  const subName = data.memberId + "/" + data.monthKey;
+  let sub;
+  try {
+    const it = folder.getFoldersByName(data.memberId);
+    sub = it.hasNext() ? it.next() : folder.createFolder(data.memberId);
+  } catch(e) { sub = folder.createFolder(data.memberId); }
+  
+  const blob = Utilities.newBlob(
+    Utilities.base64Decode(data.base64Data), data.mimeType, data.fileName
+  );
+  const file = sub.createFile(blob);
+  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  
+  // Save URL to sheet
+  updateSlipUrl(data.memberId, data.monthKey, file.getUrl());
+  
+  return { success: true, fileUrl: file.getUrl() };
+}
+
+function updateSlipUrl(memberId, monthKey, url) {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const tabName = {
+    fluke: "ฟลุ๊ค", fern: "เฟิส", santi: "สันติ",
+    grandma: "ยาย", dad_repay: "พ่อ-แม่"
+  }[memberId];
+  const sheet = ss.getSheetByName(tabName);
+  if (!sheet) return;
+  const values = sheet.getDataRange().getValues();
+  for (let i = 1; i < values.length; i++) {
+    if (values[i][0] === monthKey) {
+      sheet.getRange(i + 1, 4).setValue(url);
+      return;
+    }
+  }
+}
+
+function getData(data) {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const tabName = {
+    fluke: "ฟลุ๊ค", fern: "เฟิส", santi: "สันติ",
+    grandma: "ยาย", dad_repay: "พ่อ-แม่"
+  }[data.memberId];
+  const sheet = ss.getSheetByName(tabName);
+  if (!sheet) return { success: true, rows: [] };
+  const values = sheet.getDataRange().getValues();
+  const rows = values.slice(1).map(r => ({
+    monthKey: r[0], paidDate: r[1], status: r[2], slipUrl: r[3]
+  }));
+  return { success: true, rows };
+}
+`.trim();
