@@ -326,19 +326,8 @@ function MemberCard({ member, isActive, onClick }) {
 function buildRows(member) {
   const rows = [];
   const now = new Date();
-
-  // กำหนดวันเริ่มแยกตามสมาชิก
-  const startDates = {
-    fluke:     { year: 2024, month: 0 },  // ม.ค. 67 (2024)
-    fern:      { year: 2024, month: 0 },  // ม.ค. 67
-    santi:     { year: 2024, month: 0 },  // ม.ค. 67
-    grandma:   { year: 2025, month: 9 },  // ต.ค. 68 (2025)
-    dad_repay: { year: 2026, month: 0 },  // ม.ค. 69 (2026)
-  };
-
-  const start = startDates[member.id] || { year: 2024, month: 0 };
-  const startYear = start.year;
-  const startMonth = start.month;
+  const startYear = 2025;
+  const startMonth = 0; // January
 
   const totalMonths = member.months || 60;
   for (let i = 0; i < totalMonths; i++) {
