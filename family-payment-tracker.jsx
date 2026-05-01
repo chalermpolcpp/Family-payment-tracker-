@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 
 // ===================== CONFIG =====================
 // กรอก Google Apps Script Web App URL ของคุณที่นี่
-const GAS_URL = "YOUR_GOOGLE_APPS_SCRIPT_URL";
+const GAS_URL = "https://script.google.com/macros/s/AKfycbyvCF1lSKOCzqxKJZ3o7qd2NErLkUqLoKKmYLbOFGH5k1vLV_ytKIzFWGVMsW_b2rzOjQ/execL";
 
 const MEMBERS = [
   {
@@ -326,8 +326,19 @@ function MemberCard({ member, isActive, onClick }) {
 function buildRows(member) {
   const rows = [];
   const now = new Date();
-  const startYear = 2025;
-  const startMonth = 0; // January
+
+  // กำหนดวันเริ่มแยกตามสมาชิก
+  const startDates = {
+    fluke:     { year: 2024, month: 0 },  // ม.ค. 67 (2024)
+    fern:      { year: 2024, month: 0 },  // ม.ค. 67
+    santi:     { year: 2024, month: 0 },  // ม.ค. 67
+    grandma:   { year: 2025, month: 9 },  // ต.ค. 68 (2025)
+    dad_repay: { year: 2026, month: 0 },  // ม.ค. 69 (2026)
+  };
+
+  const start = startDates[member.id] || { year: 2024, month: 0 };
+  const startYear = start.year;
+  const startMonth = start.month;
 
   const totalMonths = member.months || 60;
   for (let i = 0; i < totalMonths; i++) {
